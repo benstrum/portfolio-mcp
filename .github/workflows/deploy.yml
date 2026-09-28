@@ -1,0 +1,47 @@
+name: Deploy Worker
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const c=JSON.parse(fs.readFileSync('wrangler.jsonc','utf8'));
+          c.name=process.env.WORKER_NAME;
+          c.kv_namespaces[0].id=process.env.KV_ID;
+          c.vars.ETRADE_ENV=process.env.ETRADE_ENV;
+          c.vars.MCP_ACCESS_TOKEN_TTL_SECONDS=process.env.ACCESS_TTL;
+          c.vars.MCP_REFRESH_TOKEN_TTL_SECONDS=process.env.REFRESH_TTL;
+          fs.writeFileSync('wrangler.jsonc',JSON.stringify(c));
+          NODE
+        env:
+          WORKER_NAME: ${{ vars.CLOUDFLARE_WORKER_NAME }}
+          KV_ID: ${{ vars.CLOUDFLARE_KV_NAMESPACE_ID }}
+          ETRADE_ENV: ${{ vars.ETRADE_ENV }}
+          ACCESS_TTL: ${{ vars.MCP_ACCESS_TOKEN_TTL_SECONDS }}
+          REFRESH_TTL: ${{ vars.MCP_REFRESH_TOKEN_TTL_SECONDS }}
+      - run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      - run: |
+          node -e "process.stdout.write(JSON.stringify({ETRADE_CONSUMER_KEY:process.env.KEY,ETRADE_CONSUMER_SECRET:process.env.SECRET,MCP_ADMIN_PASSWORD:process.env.PASSWORD}))" | npx wrangler secret bulk - --name "$WORKER_NAME"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER_NAME: ${{ vars.CLOUDFLARE_WORKER_NAME }}
+          KEY: ${{ secrets.ETRADE_CONSUMER_KEY }}
+          SECRET: ${{ secrets.ETRADE_CONSUMER_SECRET }}
+          PASSWORD: ${{ secrets.MCP_ADMIN_PASSWORD }}
