@@ -1,19 +1,18 @@
 import {oauthHeader} from './oauth1';
 export const BASE='https://api.etrade.com';
 export type Token={token:string;secret:string;obtainedAt:number};
-export class EtradeError extends Error { constructor(public readonly kind:'authorization_required'|'upstream'|'unavailable',public readonly status:number,public readonly diagnostic?:{errorType:string;causeType:string;causeCode?:string}){super(kind);}}
+export class EtradeError extends Error { constructor(public readonly kind:'authorization_required'|'upstream'|'unavailable',public readonly status:number,public readonly diagnostic?:{phase:string;errorType:string;causeType:string;causeCode?:string}){super(kind);}}
 const obj=(v:unknown):Record<string,any>=>v && typeof v==='object'?v as Record<string,any>:{};
 const arr=(v:unknown):any[]=>v===undefined||v===null?[]:Array.isArray(v)?v:[v];
 export class EtradeClient {
  constructor(private key:string,private secret:string,private token?:Token,private transport:typeof fetch=fetch){}
  private async call(path:string,token=this.token,extra:Record<string,string>={}):Promise<Response>{
   const url=BASE+path;
-  let response:Response;
-  try { response=await this.transport(url,{method:'GET',headers:{Authorization:await oauthHeader('GET',url,this.key,this.secret,token?.token,token?.secret,extra),Accept:'application/json'}}); }
-  catch (error) {
+  const unavailable=(phase:string,error:unknown):never=>{
    // Log only the failure category; OAuth credentials and headers must never reach logs.
    const cause = error instanceof Error ? (error as Error & {cause?: unknown}).cause : undefined;
    const diagnostic = {
+    phase,
     endpoint: new URL(url).pathname,
     errorType: error instanceof Error ? error.name : typeof error,
     causeType: cause instanceof Error ? cause.name : typeof cause,
@@ -21,7 +20,13 @@ export class EtradeClient {
    };
    console.error('E*TRADE request failed', diagnostic);
    throw new EtradeError('unavailable',503,diagnostic);
-  }
+  };
+  let authorization:string;
+  try { authorization=await oauthHeader('GET',url,this.key,this.secret,token?.token,token?.secret,extra); }
+  catch(error){return unavailable('sign',error);}
+  let response:Response;
+  try { response=await this.transport(url,{method:'GET',headers:{Authorization:authorization,Accept:'application/json'}}); }
+  catch(error){return unavailable('fetch',error);}
   if(!response.ok) throw new EtradeError(response.status===401||response.status===403?'authorization_required':'upstream',response.status);
   return response;
  }
