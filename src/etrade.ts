@@ -5,7 +5,7 @@ export class EtradeError extends Error { constructor(public readonly kind:'autho
 const obj=(v:unknown):Record<string,any>=>v && typeof v==='object'?v as Record<string,any>:{};
 const arr=(v:unknown):any[]=>v===undefined||v===null?[]:Array.isArray(v)?v:[v];
 export class EtradeClient {
- constructor(private key:string,private secret:string,private token?:Token,private transport:typeof fetch=fetch){}
+ constructor(private key:string,private secret:string,private token?:Token,private transport?:typeof fetch){}
  private async call(path:string,token=this.token,extra:Record<string,string>={}):Promise<Response>{
   const url=BASE+path;
   const unavailable=(phase:string,error:unknown):never=>{
@@ -29,7 +29,7 @@ export class EtradeClient {
   try { authorization=await oauthHeader('GET',url,this.key,this.secret,token?.token,token?.secret,extra); }
   catch(error){return unavailable('sign',error);}
   let response:Response;
-  try { response=await this.transport(url,{method:'GET',headers:{Authorization:authorization,Accept:'application/json'}}); }
+  try { const options={method:'GET',headers:{Authorization:authorization,Accept:'application/json'}}; response=this.transport?await this.transport(url,options):await fetch(url,options); }
   catch(error){return unavailable('fetch',error);}
   if(!response.ok) throw new EtradeError(response.status===401||response.status===403?'authorization_required':'upstream',response.status);
   return response;
