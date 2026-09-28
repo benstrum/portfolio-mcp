@@ -10,7 +10,17 @@ export class EtradeClient {
   const url=BASE+path;
   let response:Response;
   try { response=await this.transport(url,{method:'GET',headers:{Authorization:await oauthHeader('GET',url,this.key,this.secret,token?.token,token?.secret,extra),Accept:'application/json'}}); }
-  catch {throw new EtradeError('unavailable',503);}
+  catch (error) {
+   // Log only the failure category; OAuth credentials and headers must never reach logs.
+   const cause = error instanceof Error ? (error as Error & {cause?: unknown}).cause : undefined;
+   console.error('E*TRADE request failed', {
+    endpoint: new URL(url).pathname,
+    errorType: error instanceof Error ? error.name : typeof error,
+    causeType: cause instanceof Error ? cause.name : typeof cause,
+    causeCode: cause && typeof cause === 'object' && 'code' in cause && typeof cause.code === 'string' ? cause.code : undefined,
+   });
+   throw new EtradeError('unavailable',503);
+  }
   if(!response.ok) throw new EtradeError(response.status===401||response.status===403?'authorization_required':'upstream',response.status);
   return response;
  }
