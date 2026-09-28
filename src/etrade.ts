@@ -1,7 +1,7 @@
 import {oauthHeader} from './oauth1';
 export const BASE='https://api.etrade.com';
 export type Token={token:string;secret:string;obtainedAt:number};
-export class EtradeError extends Error { constructor(public readonly kind:'authorization_required'|'upstream'|'unavailable',public readonly status:number){super(kind);}}
+export class EtradeError extends Error { constructor(public readonly kind:'authorization_required'|'upstream'|'unavailable',public readonly status:number,public readonly diagnostic?:{errorType:string;causeType:string;causeCode?:string}){super(kind);}}
 const obj=(v:unknown):Record<string,any>=>v && typeof v==='object'?v as Record<string,any>:{};
 const arr=(v:unknown):any[]=>v===undefined||v===null?[]:Array.isArray(v)?v:[v];
 export class EtradeClient {
@@ -13,13 +13,14 @@ export class EtradeClient {
   catch (error) {
    // Log only the failure category; OAuth credentials and headers must never reach logs.
    const cause = error instanceof Error ? (error as Error & {cause?: unknown}).cause : undefined;
-   console.error('E*TRADE request failed', {
+   const diagnostic = {
     endpoint: new URL(url).pathname,
     errorType: error instanceof Error ? error.name : typeof error,
     causeType: cause instanceof Error ? cause.name : typeof cause,
     causeCode: cause && typeof cause === 'object' && 'code' in cause && typeof cause.code === 'string' ? cause.code : undefined,
-   });
-   throw new EtradeError('unavailable',503);
+   };
+   console.error('E*TRADE request failed', diagnostic);
+   throw new EtradeError('unavailable',503,diagnostic);
   }
   if(!response.ok) throw new EtradeError(response.status===401||response.status===403?'authorization_required':'upstream',response.status);
   return response;
