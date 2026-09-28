@@ -1,0 +1,1 @@
+{"$schema":"./node_modules/wrangler/config-schema.json","name":"portfolio-mcp","main":"src/index.ts","compatibility_date":"2026-09-28","compatibility_flags":["nodejs_compat"],"kv_namespaces":[{"binding":"STATE","id":"00000000000000000000000000000000"}],"vars":{"ETRADE_ENV":"production","MCP_ACCESS_TOKEN_TTL_SECONDS":"3600","MCP_REFRESH_TOKEN_TTL_SECONDS":"2592000"}}

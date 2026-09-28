@@ -1,0 +1,6 @@
+import {it,expect} from 'vitest';
+import {EtradeClient,EtradeError,snapshot} from '../src/etrade';
+import {toolNames} from '../src/index';
+it('sanitizes upstream authorization errors',async()=>{const c=new EtradeClient('key','secret',{token:'token',secret:'token-secret',obtainedAt:0},async()=>new Response('account 123 secret!',{status:401}));await expect(c.accounts()).rejects.toMatchObject({kind:'authorization_required',status:401});});
+it('exposes only six read-only tools',()=>{expect(toolNames).toEqual(['get_connection_status','get_accounts','get_account_balances','get_positions','get_transactions','get_portfolio_snapshot']);expect(toolNames.some(x=>/order|trade|transfer|cancel|modify/.test(x))).toBe(false);});
+it('consolidates positions and totals across accounts',()=>{const s=snapshot([{accountIdKey:'a'},{accountIdKey:'b'}],[{cashBalance:10,totalAccountValue:30},{cashBalance:20,totalAccountValue:50}],[[{symbol:'ABC',marketValue:20,quantity:2,costBasis:15,unrealizedGainLoss:5}],[{symbol:'XYZ',marketValue:30,quantity:3}]]);expect(s).toMatchObject({cashTotal:30,marketValueTotal:50,portfolioTotal:80});expect(s.positions).toHaveLength(2);expect(s.positions[0].costBasis).toBe(15);});
