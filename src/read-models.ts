@@ -110,7 +110,7 @@ export function normalizeChain(raw:unknown,symbol:string,expiration:string,optio
         mid:bid!==undefined&&ask!==undefined&&bid>=0&&ask>=bid?(bid+ask)/2:undefined,
         last:amount(pick(o,'lastPrice')),volume:amount(pick(o,'volume')),openInterest:amount(pick(o,'openInterest')),
         osiKey:name(pick(o,'osiKey')),quoteTimeUTC:sourceTimestamp(pick(o,'timeStamp')),
-        adjusted:pick(o,'adjustedFlag'),greeks:greeks(pick(o,'OptionGreeks','optionGreek'))
+        adjusted:pick(o,'adjustedFlag'),greeks:greeks(pick(o,'OptionGreeks','optionGreek','optionGreeks'))
       });
     }
     return out;
@@ -121,7 +121,7 @@ export function normalizeChain(raw:unknown,symbol:string,expiration:string,optio
 }
 export function normalizeOptionExpirations(raw:unknown,symbol:string) {
   const d=pick(raw,'OptionExpireDateResponse');
-  return {symbol,dates:items(pick(d,'ExpirationDate')).map(e=>({
+  return {symbol,dates:items(pick(d,'ExpirationDate','expirationDates')).map(e=>({
     year:amount(pick(e,'year')),month:amount(pick(e,'month')),day:amount(pick(e,'day')),
     expiryType:name(pick(e,'expiryType'))
   }))};
@@ -155,7 +155,7 @@ export function normalizeOrders(raw:unknown,accountIdKey:string,status?:string) 
       };
     });
     return {orderId:pick(d,'orderId'),orderType:name(pick(d,'orderType')),
-      status:details[details.length-1]?.status,details};
+      status:details[details.length-1]?.status??name(pick(d,'status')),details};
   }),nextMarker:name(pick(root,'marker')),moreOrders:!!pick(root,'next')};
 }
 export function normalizePositionLots(raw:unknown,accountIdKey:string) {
