@@ -116,4 +116,30 @@ export class EtradeClient {
  async transactions(key:string,startDate?:string,endDate?:string,marker?:string):Promise<any>{const q=new URLSearchParams();if(startDate)q.set('startDate',startDate);if(endDate)q.set('endDate',endDate);if(marker)q.set('marker',marker);q.set('count','50');const d=await this.json(`/v1/accounts/${encodeURIComponent(key)}/transactions?${q}`);const t=obj(d.TransactionListResponse);return {accountIdKey:key,transactions:arr(t.Transaction).map(x=>({transactionId:x.transactionId,transactionDate:x.transactionDate,amount:x.amount,description:x.description,transactionType:x.transactionType,symbol:x.brokerage?.product?.symbol})),nextMarker:t.marker,moreTransactions:t.moreTransactions};}
 }
 export function mask(value:unknown):string|undefined{if(value===undefined||value===null)return undefined;const s=String(value);return `••••${s.slice(-4)}`;}
-export function snapshot(accounts:any[],balances:any[],positions:any[][]){const perAccount=accounts.map((a,i)=>{const b=balances[i],p=positions[i];const cash=Number(b.cashBalance??0);const marketValue=p.reduce((n,x)=>n+Number(x.marketValue??0),0);return {accountIdKey:a.accountIdKey,accountName:a.accountName,accountNumberMasked:a.accountNumberMasked,cash,marketValue,portfolioTotal:Number(b.totalAccountValue??cash+marketValue),positions:p};});return {accounts:perAccount,positions:perAccount.flatMap(a=>a.positions),cashTotal:perAccount.reduce((n,a)=>n+a.cash,0),marketValueTotal:perAccount.reduce((n,a)=>n+a.marketValue,0),portfolioTotal:perAccount.reduce((n,a)=>n+a.portfolioTotal,0)};}
+export function snapshot(accounts:any[],balances:any[],positions:any[][]){
+ const perAccount=accounts.map((a,i)=>{
+   const b=balances[i],p=positions[i];
+   const cashKnown=b.cashBalance!==undefined&&b.cashBalance!==null;
+   const cash=cashKnown?Number(b.cashBalance):null;
+   const marketValue=p.reduce((n,x)=>n+Number(x.marketValue??0),0);
+   const moneyMarketPositionValue=p.filter(x=>x.securityType==='MMF').reduce((n,x)=>n+Number(x.marketValue??0),0);
+   const brokerValue=Number(b.totalAccountValue);
+   const hasBrokerValue=b.totalAccountValue!==undefined&&b.totalAccountValue!==null&&Number.isFinite(brokerValue);
+   const accountTotal=hasBrokerValue?brokerValue:cash!==null?cash+marketValue:null;
+   return {accountIdKey:a.accountIdKey,accountName:a.accountName,accountNumberMasked:a.accountNumberMasked,
+     cash,marketValue,moneyMarketPositionValue,
+     portfolioTotal:accountTotal,
+     portfolioTotalSource:hasBrokerValue?'BROKER_REPORTED':'ESTIMATED_MARKET_PLUS_CASH',
+     settledCashForInvestment:b.settledCashForInvestment,
+     marginBalance:b.marginBalance,accountMode:b.accountMode,positions:p};
+ });
+ const knownCash=perAccount.filter(a=>a.cash!==null);
+ const knownTotals=perAccount.filter(a=>a.portfolioTotal!==null);
+ return {accounts:perAccount,positions:perAccount.flatMap(a=>a.positions),
+   cashTotal:knownCash.length===perAccount.length?knownCash.reduce((n,a)=>n+a.cash!,0):null,
+   marketValueTotal:perAccount.reduce((n,a)=>n+a.marketValue,0),
+   moneyMarketPositionValueTotal:perAccount.reduce((n,a)=>n+a.moneyMarketPositionValue,0),
+   portfolioTotal:knownTotals.length===perAccount.length?knownTotals.reduce((n,a)=>n+a.portfolioTotal!,0):null,
+   totalSources:perAccount.map(a=>({accountIdKey:a.accountIdKey,source:a.portfolioTotalSource})),
+   warning:'Cash excludes money-market positions. Estimated account totals may not equal net liquidation value where margin liabilities or unsettled cash are not reported.'};
+}
