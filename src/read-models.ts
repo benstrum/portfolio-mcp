@@ -34,7 +34,7 @@ export function normalizeQuote(q:unknown,requestedSymbol?:string) {
   const product=record(pick(q,'Product'));
   const all=record(pick(q,'All'));
   const opts=record(pick(q,'Option'));
-  const details=Object.keys(all).length?all:Object.keys(opts).length?opts:record(pick(q,'Intraday'));
+  const details={...record(pick(q,'Intraday')),...opts,...all};
   const bid=amount(pick(details,'bid')),ask=amount(pick(details,'ask'));
   const validMarket=bid!==undefined&&ask!==undefined&&bid>=0&&ask>=bid;
   const quoteStatus=name(pick(q,'quoteStatus'))??'UNKNOWN';
@@ -84,11 +84,20 @@ export function normalizeQuotes(raw:unknown,requestedSymbols:string[]) {
     // An option request has a colon-delimited format but product.symbol may only be the underlying;
     // use the six fields to match rather than assigning an unrelated option quote.
     const p=requested.split(':');
-    const matched=p.length===6?normalized.filter(x=>
-      x.symbol===p[0] && x.option.expiryYear===Number(p[1]) && x.option.expiryMonth===Number(p[2]) &&
-      x.option.expiryDay===Number(p[3]) && x.option.callPut===p[4] && x.option.strikePrice===Number(p[5])
-    ):exact;
-    const chosen=matched.length===1?matched[0] : requestedSymbols.length===1&&normalized.length===1?normalized[0]:undefined;
+    const matched=p.length===6?normalized.filter(x=>{
+      if(x.securityType!=='OPTN'||x.symbol!==p[0])return false;
+      const o=x.option;
+      if(o.expiryYear!==undefined&&o.expiryMonth!==undefined&&o.expiryDay!==undefined&&
+        o.callPut!==undefined&&o.strikePrice!==undefined)
+        return o.expiryYear===Number(p[1])&&o.expiryMonth===Number(p[2])&&
+          o.expiryDay===Number(p[3])&&o.callPut===p[4]&&o.strikePrice===Number(p[5]);
+      // E*TRADE sometimes identifies an option only through its OSI key.
+      const osi=o.osiKey?.match(/(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/);
+      return !!osi&&Number(osi[1])+2000===Number(p[1])&&Number(osi[2])===Number(p[2])&&
+        Number(osi[3])===Number(p[3])&&osi[4]===(p[4]==='CALL'?'C':'P')&&
+        Number(osi[5])/1000===Number(p[5]);
+    }):exact;
+    const chosen=matched.length===1?matched[0]:undefined;
     return chosen?{...chosen,requestedSymbol:requested}:{
       requestedSymbol:requested,unavailable:true as const,reason:'No unambiguous matching quote returned'
     };
@@ -121,7 +130,9 @@ export function normalizeChain(raw:unknown,symbol:string,expiration:string,optio
 }
 export function normalizeOptionExpirations(raw:unknown,symbol:string) {
   const d=pick(raw,'OptionExpireDateResponse');
-  return {symbol,dates:items(pick(d,'ExpirationDate','expirationDates')).map(e=>({
+  const container=pick(d,'ExpirationDate','expirationDates');
+  const dates=pick(container,'ExpirationDate')??container;
+  return {symbol,dates:items(dates).map(e=>({
     year:amount(pick(e,'year')),month:amount(pick(e,'month')),day:amount(pick(e,'day')),
     expiryType:name(pick(e,'expiryType'))
   }))};
