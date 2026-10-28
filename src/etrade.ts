@@ -34,7 +34,7 @@ export class EtradeClient {
   if(!response.ok) throw new EtradeError(response.status===401||response.status===403?'authorization_required':'upstream',response.status);
   return response;
  }
- async requestToken():Promise<{token:string;secret:string}>{const p=new URLSearchParams(await (await this.call('/oauth/request_token',undefined,{oauth_callback:'oob'})).text()); const token=p.get('oauth_token'),secret=p.get('oauth_token_secret');if(!token||!secret)throw new EtradeError('upstream',502);return {token,secret};}
+ async requestToken():Promise<{token:string;secret:string;callbackConfirmed:boolean}>{const p=new URLSearchParams(await (await this.call('/oauth/request_token',undefined,{oauth_callback:'oob'})).text()); const token=p.get('oauth_token'),secret=p.get('oauth_token_secret');if(!token||!secret)throw new EtradeError('upstream',502);return {token,secret,callbackConfirmed:p.get('oauth_callback_confirmed')?.toLowerCase()==='true'};}
  async accessToken(request:{token:string;secret:string},verifier:string):Promise<Token>{const p=new URLSearchParams(await (await this.call('/oauth/access_token',{...request,obtainedAt:0},{oauth_verifier:verifier})).text());const token=p.get('oauth_token'),secret=p.get('oauth_token_secret');if(!token||!secret)throw new EtradeError('upstream',502);return {token,secret,obtainedAt:Date.now()};}
  async renew():Promise<void>{await this.call('/oauth/renew_access_token');}
  private async json(path:string):Promise<Record<string,any>>{const res=await this.call(path);try{return obj(await res.json());}catch{throw new EtradeError('upstream',502);}}
