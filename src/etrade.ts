@@ -98,7 +98,7 @@ export class EtradeClient {
  }
  async optionQuote(symbol:string,expiration:string,type:'CALL'|'PUT',strike:number){
   const [year,month,day]=expiration.split('-').map(Number);
-  const id=`${symbol}:${year}:${month}:${day}:${type}:${strike}`;
+  const id=`${symbol}:${year}:${month}:${day}:${type}:${strike.toFixed(6)}`;
   const data=await this.quotes([id]);
   return {contract:id,quote:data.quotes[0],receivedAt:data.receivedAt,messages:data.messages};
  }
