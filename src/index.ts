@@ -22,7 +22,8 @@ const connect=(r:Request)=>`${origin(r)}/etrade/connect`;
 async function token(env:Env){return currentToken(env);}
 async function status(env:Env,r:Request){const t=await token(env);const lastPreflight=await env.STATE.get('etrade:lastHealth','json');return {connected:!!t,authorizationRequired:!t,reconnectUrl:!t?connect(r):undefined,authorizedAt:t?.obtainedAt,lastPreflight};}
 async function client(env:Env,_r:Request){return (await connectedClient(env)).client;}
-const toolNames=['get_connection_status','get_accounts','get_account_balances','get_positions','get_transactions','get_portfolio_snapshot'] as const;
+const toolNames=['get_connection_status','get_accounts','get_account_balances','get_positions','get_transactions','get_portfolio_snapshot',
+ 'get_quotes','get_option_quote','get_option_chain','get_option_expirations','get_vertical_spread_quote','get_orders','get_position_lots'] as const;
 export {toolNames};
 async function mcp(env:Env,req:Request){const server=new McpServer({name:'etrade-readonly-portfolio',version:'1.0.0'});
  const result=(v:unknown)=>({content:[{type:'text' as const,text:JSON.stringify(v)}],structuredContent:v as Record<string,unknown>});
@@ -33,7 +34,78 @@ async function mcp(env:Env,req:Request){const server=new McpServer({name:'etrade
  server.registerTool('get_account_balances',{description:'Read-only balances for an E*TRADE account.',inputSchema:{accountIdKey:z.string().min(1)}},async({accountIdKey})=>wrap(async()=>({balance:await (await account(accountIdKey)).balance(accountIdKey)}))());
  server.registerTool('get_positions',{description:'Read-only positions for an E*TRADE account, including value and cost when supplied.',inputSchema:{accountIdKey:z.string().min(1)}},async({accountIdKey})=>wrap(async()=>({positions:await (await account(accountIdKey)).positions(accountIdKey)}))());
  server.registerTool('get_transactions',{description:'Read-only transactions for an E*TRADE account. Dates use MMDDYYYY.',inputSchema:{accountIdKey:z.string().min(1),startDate:z.string().regex(/^\d{8}$/).optional(),endDate:z.string().regex(/^\d{8}$/).optional(),marker:z.string().optional()}},async({accountIdKey,startDate,endDate,marker})=>wrap(async()=>await (await account(accountIdKey)).transactions(accountIdKey,startDate,endDate,marker))());
- server.registerTool('get_portfolio_snapshot',{description:'Read-only consolidated positions, cash and portfolio totals across every E*TRADE account.'},wrap(async()=>{const c=await client(env,req),accounts=await c.accounts();const [balances,positions]=await Promise.all([Promise.all(accounts.map(a=>c.balance(a.accountIdKey))),Promise.all(accounts.map(a=>c.positions(a.accountIdKey)))]);return snapshot(accounts,balances,positions);}));
+ const ticker=z.string().regex(/^[A-Za-z][A-Za-z0-9.-]{0,12}$/,'Expected a stock ticker');
+ const exp=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(s=>{const x=new Date(s+'T00:00:00Z');return !Number.isNaN(x.getTime())&&x.toISOString().slice(0,10)===s;},'Invalid expiration date');
+ const strike=z.number().finite().positive().max(100000);
+ const cp=z.enum(['CALL','PUT']);
+ server.registerTool('get_quotes',{
+   description:'Read-only E*TRADE stock/ETF bid/ask quotes (1-25 tickers). Returns provider REALTIME/DELAYED status and timestamps; do not assume executable real-time pricing.',
+   inputSchema:{symbols:z.array(ticker).min(1).max(25)}
+ },async({symbols})=>wrap(async()=>await (await client(env,req)).quotes(symbols.map(x=>x.toUpperCase())))());
+ server.registerTool('get_option_quote',{
+   description:'Read-only quote for one exact option contract, including bid/ask, sizes, provider timestamp, quote status, and option Greeks where available.',
+   inputSchema:{underlying:ticker,expiration:exp,optionType:cp,strikePrice:strike}
+ },async({underlying,expiration,optionType,strikePrice})=>wrap(async()=>await (await client(env,req)).optionQuote(underlying.toUpperCase(),expiration,optionType,strikePrice))());
+ server.registerTool('get_option_chain',{
+   description:'Read-only option chain for a specified expiration; returns exact call/put strike, bid/ask, size, open interest and quote timestamps.',
+   inputSchema:{underlying:ticker,expiration:exp,optionType:z.enum(['CALL','PUT','BOTH']).default('BOTH'),
+     strikePriceNear:strike.optional(),noOfStrikes:z.number().int().min(1).max(40).default(20)}
+ },async({underlying,expiration,optionType,strikePriceNear,noOfStrikes})=>wrap(async()=>await (await client(env,req)).optionChain(underlying.toUpperCase(),expiration,optionType,strikePriceNear,noOfStrikes))());
+ server.registerTool('get_option_expirations',{
+   description:'Read-only list of available E*TRADE option expiration dates for a symbol.',
+   inputSchema:{underlying:ticker}
+ },async({underlying})=>wrap(async()=>await (await client(env,req)).optionExpirations(underlying.toUpperCase()))());
+ server.registerTool('get_vertical_spread_quote',{
+   description:'Read-only INDICATIVE two-leg vertical quote for a long and short option at the same expiration. Derives opening debit ask = long ask minus short bid; closing credit bid = long bid minus short ask. NOT an executable combination-market quote. Verify E*TRADE combo market.',
+   inputSchema:{underlying:ticker,expiration:exp,optionType:cp,longStrike:strike,shortStrike:strike}
+ },async({underlying,expiration,optionType,longStrike,shortStrike})=>wrap(async()=>{
+   if(longStrike===shortStrike)throw new EtradeError('upstream',400);
+   const symbol=underlying.toUpperCase(),c=await client(env,req);
+   const [long,short]=await Promise.all([
+     c.optionQuote(symbol,expiration,optionType,longStrike),
+     c.optionQuote(symbol,expiration,optionType,shortStrike)
+   ]);
+   if('unavailable' in (long.quote??{})||'unavailable' in (short.quote??{}))
+     return {error:'missing_option_quote',longQuote:long.quote,shortQuote:short.quote,warning:'No spread price calculated from missing leg markets'};
+   const {verticalPrice}=await import('./read-models');
+   return verticalPrice(symbol,expiration,optionType,longStrike,shortStrike,
+     long.quote as Parameters<typeof verticalPrice>[5],short.quote as Parameters<typeof verticalPrice>[6]);
+ })());
+ server.registerTool('get_orders',{
+   description:'Read-only list of open or historical E*TRADE order statuses and multi-leg details for one account. This tool cannot place, change or cancel orders.',
+   inputSchema:{accountIdKey:z.string().min(1),
+     status:z.enum(['OPEN','EXECUTED','CANCELLED','INDIVIDUAL_FILLS','CANCEL_REQUESTED','EXPIRED','REJECTED']).default('OPEN'),
+     fromDate:z.string().regex(/^\d{8}$/).optional(),toDate:z.string().regex(/^\d{8}$/).optional(),
+     count:z.number().int().min(1).max(100).default(50),marker:z.string().max(512).optional()}
+ },async({accountIdKey,status,fromDate,toDate,count,marker})=>wrap(async()=>{
+   if(!!fromDate!==!!toDate)throw new EtradeError('upstream',400);
+   return (await account(accountIdKey)).orders(accountIdKey,status,marker,fromDate,toDate,count);
+ })());
+ server.registerTool('get_position_lots',{
+   description:'Read-only E*TRADE holdings and acquisition-level tax lots for one account, if supported. Missing lots must not be interpreted as zero cost basis.',
+   inputSchema:{accountIdKey:z.string().min(1)}
+ },async({accountIdKey})=>wrap(async()=>await (await account(accountIdKey)).positionLots(accountIdKey))());
+ server.registerTool('get_portfolio_snapshot',{
+   description:'Read-only consolidated ACTIVE E*TRADE accounts; partial data when an account endpoint fails. Money-market funds are positions, not cash. No closed accounts included.'
+ },wrap(async()=>{
+   const c=await client(env,req),all=await c.accounts(),accounts=all.filter(a=>a.accountStatus==='ACTIVE');
+   const retrieved=await Promise.all(accounts.map(async a=>{
+     const [balance,positions]=await Promise.allSettled([c.balance(a.accountIdKey),c.positions(a.accountIdKey)]);
+     return {account:a,balance,positions};
+   }));
+   const valid=retrieved.filter(x=>x.balance.status==='fulfilled'&&x.positions.status==='fulfilled');
+   const errors=retrieved.filter(x=>x.balance.status!=='fulfilled'||x.positions.status!=='fulfilled').map(x=>({
+     accountName:x.account.accountName,accountNumberMasked:x.account.accountNumberMasked,
+     balanceAvailable:x.balance.status==='fulfilled',positionsAvailable:x.positions.status==='fulfilled'
+   }));
+   const summary=snapshot(valid.map(x=>x.account),
+     valid.map(x=>(x.balance as PromiseFulfilledResult<any>).value),
+     valid.map(x=>(x.positions as PromiseFulfilledResult<any>).value));
+   return {...summary,partial:errors.length>0,unavailableAccounts:errors,
+     activeAccountCount:accounts.length,includedAccountCount:valid.length,
+     excludedClosedAccountCount:all.length-accounts.length,receivedAt:new Date().toISOString(),
+     note:'Position values include money-market funds. Account total is indicative if broker totalAccountValue or margin liabilities are unavailable. Do not interpret unrealized P/L as total period return.'};
+ }));
  const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined});await server.connect(transport);return transport.handleRequest(req);
 }
 async function hash(s:string){const b=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)));return Array.from(b,x=>x.toString(16).padStart(2,'0')).join('');}
