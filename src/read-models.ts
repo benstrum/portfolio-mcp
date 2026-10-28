@@ -37,6 +37,15 @@ export function normalizeQuote(q:unknown,requestedSymbol?:string) {
   const details={...record(pick(q,'Intraday')),...opts,...all};
   const bid=amount(pick(details,'bid')),ask=amount(pick(details,'ask'));
   const validMarket=bid!==undefined&&ask!==undefined&&bid>=0&&ask>=bid;
+  const extended=record(pick(details,'ehQuote','extendedHourQuoteDetail'));
+  const extendedHours=Object.keys(extended).length?{
+    quoteStatus:name(pick(extended,'quoteStatus'))??'UNKNOWN',
+    bid:amount(pick(extended,'bid')),ask:amount(pick(extended,'ask')),
+    bidSize:amount(pick(extended,'bidSize')),askSize:amount(pick(extended,'askSize')),
+    last:amount(pick(extended,'lastPrice')),change:amount(pick(extended,'change')),
+    changePct:amount(pick(extended,'percentChange')),volume:amount(pick(extended,'volume')),
+    lastTradeTime:sourceTimestamp(pick(extended,'timeOfLastTrade'))
+  }:undefined;
   const quoteStatus=name(pick(q,'quoteStatus'))??'UNKNOWN';
   const contractSize=amount(pick(details,'contractSize')),optionMultiplier=amount(pick(details,'optionMultiplier'));
   const s={
@@ -47,6 +56,7 @@ export function normalizeQuote(q:unknown,requestedSymbol?:string) {
     quoteTimeUTC:sourceTimestamp(pick(q,'dateTimeUTC')),
     quoteTime:name(pick(q,'dateTime')),
     fetchedAt:new Date().toISOString(),
+    extendedHours,
     bid,ask,mid:validMarket?(bid!+ask!)/2:undefined,
     bidSize:amount(pick(details,'bidSize')),askSize:amount(pick(details,'askSize')),
     last:amount(pick(details,'lastTrade','lastPrice','last')),
