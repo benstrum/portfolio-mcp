@@ -41,14 +41,30 @@ export class EtradeClient {
  private async json(path:string):Promise<Record<string,any>>{const res=await this.call(path);if(res.status===204)return {};try{return obj(await res.json());}catch{throw new EtradeError('upstream',502);}}
  async accounts():Promise<any[]>{const d=await this.json('/v1/accounts/list');return arr(obj(obj(d.AccountListResponse).Accounts).Account).map(a=>({accountIdKey:String(a.accountIdKey),accountName:a.accountName,accountType:a.accountType,institutionType:a.institutionType,accountStatus:a.accountStatus,accountNumberMasked:mask(a.accountId)}));}
  async balance(key:string):Promise<any>{
-  const d=await this.json(`/v1/accounts/${encodeURIComponent(key)}/balance?instType=BROKERAGE&realTimeNAV=true`);
-  const b=obj(d.BalanceResponse);
-  const c=obj(b.Computed??b.ComputedBalance??b.computedBalance);
-  const cash=obj(b.Cash??b.cash);
-  const margin=obj(b.Margin??b.margin);
-  const realtime=obj(c.RealTimeValues??c.realTimeValues);
-  return {
-    accountIdKey:key,accountNumberMasked:mask(b.accountId), async positions(key:string):Promise<any[]>{
+   const d=await this.json(`/v1/accounts/${encodeURIComponent(key)}/balance?instType=BROKERAGE&realTimeNAV=true`);
+   const b=obj(d.BalanceResponse);
+   const c=obj(b.Computed??b.ComputedBalance??b.computedBalance);
+   const cash=obj(b.Cash??b.cash);
+   const margin=obj(b.Margin??b.margin);
+   const realtime=obj(c.RealTimeValues??c.realTimeValues);
+   return {
+     accountIdKey:key,accountNumberMasked:mask(b.accountId),
+     accountType:b.accountType,accountMode:b.accountMode,optionLevel:b.optionLevel,
+     asOfDate:b.asOfDate,quoteMode:b.quoteMode,
+     cashBalance:c.cashBalance,cashAvailableForInvestment:c.cashAvailableForInvestment,
+     settledCashForInvestment:c.settledCashForInvestment,
+     unSettledCashForInvestment:c.unSettledCashForInvestment,
+     cashAvailableForWithdrawal:c.cashAvailableForWithdrawal,
+     cashBuyingPower:c.cashBuyingPower,marginBuyingPower:c.marginBuyingPower,
+     marginBalance:c.marginBalance,accountBalance:c.accountBalance,
+     cashOpenOrderReserve:cash.fundsForOpenOrdersCash,
+     moneyMarketSweepBalance:cash.moneyMktBalance,
+     marginOpenOrderReserve:margin.dtMarginOpenOrderReserve,
+     totalAccountValue:realtime.totalAccountValue,
+     liquidatingEquity:obj(c.PortfolioMargin??c.portfolioMargin).liquidatingEquity
+   };
+ }
+ async positions(key:string):Promise<any[]>{
   const out:any[]=[];
   for(let page=1;page<=100;page++){
     const d=await this.json(`/v1/accounts/${encodeURIComponent(key)}/portfolio?count=50&pageNumber=${page}&totalsRequired=true`);
