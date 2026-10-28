@@ -45,7 +45,7 @@ describe('market quotes',()=>{
  });
  it('builds an exact six-field option ID and never uses an equity quote as its price',async()=>{
    const c=client(url=>{
-     expect(url).toContain('/v1/market/quote/VRT:2027:1:15:CALL:230?detailFlag=ALL');
+     expect(url).toContain('/v1/market/quote/VRT:2027:1:15:CALL:230.000000?detailFlag=ALL');
      return Response.json({QuoteResponse:{QuoteData:[{
        Product:{symbol:'VRT',securityType:'OPTN',callPut:'CALL',expiryYear:2027,expiryMonth:1,expiryDay:15,strikePrice:230},
        quoteStatus:'REALTIME',dateTimeUTC:1793190010,
