@@ -70,7 +70,10 @@ it('finishes a registered E*TRADE callback only for its initiating browser sessi
   const callback=await worker.fetch(new Request(base+'/etrade/callback?oauth_verifier=ABCD12&oauth_token=request-token',{
     headers:{Cookie:header}
   }),env);
-  expect(callback.status).toBe(200);
+  expect(callback.status).toBe(303);
+  expect(callback.headers.get('Location')).toBe('/etrade/connected');
+  const success=await worker.fetch(new Request(base+'/etrade/connected'),env);
+  expect(success.status).toBe(200);
   expect(callback.headers.get('Set-Cookie')).toContain('Max-Age=0');
   expect(JSON.parse(state.get('etrade:access')!)).toMatchObject({
     token:'access-token',secret:'access-secret'
@@ -99,6 +102,6 @@ it('falls back to manual verifier within the browser if E*TRADE has no registere
     method:'POST',headers:{Cookie:page.headers.get('Set-Cookie')!.split(';')[0]},
     body:new URLSearchParams({verifier:'ABCD123'})
   }),env);
-  expect(completed.status).toBe(200);
+  expect(completed.status).toBe(303);
   expect(state.has('etrade:access')).toBe(true);
 });
