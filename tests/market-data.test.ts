@@ -27,6 +27,15 @@ describe('market quotes',()=>{
    expect(out.quotes[0]).toMatchObject({symbol:'AVGO',quoteStatus:'DELAYED',isRealTime:false,bid:348.3,ask:348.4});
    expect(out.quotes[1]).toMatchObject({symbol:'VRT',quoteStatus:'REALTIME',mid:243,quoteTimeUTC:1793190000,isRealTime:true});
  });
+ it('reports pre-market extended-hours prices separately from regular-session quotes',()=>{
+   const raw={QuoteResponse:{QuoteData:[{Product:{symbol:'VRT',securityType:'EQ'},
+     quoteStatus:'EH_BEFORE_OPEN',All:{bid:207,ask:209,lastTrade:208.56,
+       ehQuote:{quoteStatus:'EH_REALTIME',bid:242.90,ask:243.10,lastPrice:243,
+         percentChange:16.51,timeOfLastTrade:1793190100}}}]}};
+   const q=normalizeQuotes(raw,['VRT']).quotes[0];
+   expect(q).toMatchObject({bid:207,ask:209,
+     extendedHours:{quoteStatus:'EH_REALTIME',bid:242.9,ask:243.1,last:243,changePct:16.51}});
+ });
  it('does not fabricate a missing quote, 0 ask, or a mid from an invalid market',()=>{
    const raw={QuoteResponse:{QuoteData:[{Product:{symbol:'VRT'},quoteStatus:'CLOSING',All:{bid:2,ask:1}}]}};
    const q=normalizeQuotes(raw,['VRT','AVGO']).quotes;
