@@ -49,6 +49,25 @@ describe('market quotes',()=>{
    expect(got.quote).toMatchObject({bid:30,ask:30.8,quoteStatus:'REALTIME',
      option:{strikePrice:230,optionMultiplier:100,osiKey:'VRT---270115C00230000'}});
  });
+ it('rejects an unrelated equity quote for an exact option contract',()=>{
+   const request='VRT:2027:1:15:CALL:230';
+   const bogus=normalizeQuotes({QuoteResponse:{QuoteData:[{
+     Product:{symbol:'VRT',securityType:'EQ'},quoteStatus:'REALTIME',All:{bid:242,ask:243}
+   }]}},[request]).quotes[0];
+   expect(bogus).toMatchObject({unavailable:true});
+   const wrongStrike=normalizeQuotes({QuoteResponse:{QuoteData:[{
+     Product:{symbol:'VRT',securityType:'OPTN',expiryYear:2027,expiryMonth:1,expiryDay:15,callPut:'CALL',strikePrice:235},
+     quoteStatus:'REALTIME',Option:{bid:24,ask:25}
+   }]}},[request]).quotes[0];
+   expect(wrongStrike).toMatchObject({unavailable:true});
+ });
+ it('accepts an OSI-identified option when E*TRADE omits full Product strike metadata',()=>{
+   const out=normalizeQuotes({QuoteResponse:{QuoteData:[{
+     Product:{symbol:'VRT',securityType:'OPTN'},quoteStatus:'REALTIME',
+     All:{bid:31,ask:32,osiKey:'VRT---270115C00230000',optionMultiplier:100}
+   }]}},['VRT:2027:1:15:CALL:230']).quotes[0];
+   expect(out).toMatchObject({bid:31,ask:32,validTwoSidedMarket:true});
+ });
  it('extracts both a PascalCase option chain and documented expiration dates',()=>{
    const chain=normalizeChain({OptionChainResponse:{quoteType:'DELAYED',timeStamp:1793000000,
      OptionPair:[{Call:{strikePrice:230,bid:30,ask:31,optionType:'CALL',OptionGreeks:{delta:.8}},
