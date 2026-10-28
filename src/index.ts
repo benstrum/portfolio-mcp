@@ -1,3 +1,6 @@
+import {currentToken,connectedClient} from './etrade-session';
+import {etradeBrowserRoutes} from './etrade-browser';
+import {runEtradePreflight} from './etrade-health';
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {WebStandardStreamableHTTPServerTransport} from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import {z} from 'zod';
@@ -15,11 +18,10 @@ function authorizeCsp(redirect:string):string {
 }
 const esc=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const origin=(r:Request)=>new URL(r.url).origin;
-const connect=(r:Request)=>`${origin(r)}/etrade/auth/start`;
-function easternDay(time:number):string{return new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(time));}
-async function token(env:Env){const t=await env.STATE.get<Token>('etrade:access','json');return t&&easternDay(t.obtainedAt)===easternDay(Date.now())?t:null;}
-async function status(env:Env,r:Request){const t=await token(env);return {connected:!!t,authorizationRequired:!t,reconnectUrl:!t?connect(r):undefined,authorizedAt:t?.obtainedAt};}
-async function client(env:Env,r:Request){const t=await token(env);if(!t)throw new EtradeError('authorization_required',401);const c=new EtradeClient(env.ETRADE_CONSUMER_KEY,env.ETRADE_CONSUMER_SECRET,t);try{await c.accounts();return c;}catch(e){if(e instanceof EtradeError&&e.kind==='authorization_required'){try{await c.renew();return c;}catch{await env.STATE.delete('etrade:access');throw new EtradeError('authorization_required',401);}}throw e;}}
+const connect=(r:Request)=>`${origin(r)}/etrade/connect`;
+async function token(env:Env){return currentToken(env);}
+async function status(env:Env,r:Request){const t=await token(env);const lastPreflight=await env.STATE.get('etrade:lastHealth','json');return {connected:!!t,authorizationRequired:!t,reconnectUrl:!t?connect(r):undefined,authorizedAt:t?.obtainedAt,lastPreflight};}
+async function client(env:Env,_r:Request){return (await connectedClient(env)).client;}
 const toolNames=['get_connection_status','get_accounts','get_account_balances','get_positions','get_transactions','get_portfolio_snapshot'] as const;
 export {toolNames};
 async function mcp(env:Env,req:Request){const server=new McpServer({name:'etrade-readonly-portfolio',version:'1.0.0'});
@@ -47,7 +49,7 @@ async function oauthRoutes(r:Request,e:Env,u:URL):Promise<Response|undefined>{
 }
 async function hashBase64(s:string){const bytes=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)));return btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');}
 async function issue(e:Env,id:string){const access=random(),refresh=random(),at=ttl(e.MCP_ACCESS_TOKEN_TTL_SECONDS,3600),rt=ttl(e.MCP_REFRESH_TOKEN_TTL_SECONDS,2592000);await Promise.all([e.STATE.put(`mcp:access:${await hash(access)}`,id,{expirationTtl:at}),e.STATE.put(`mcp:refresh:${await hash(refresh)}`,JSON.stringify({id}),{expirationTtl:rt})]);return json({access_token:access,token_type:'Bearer',expires_in:at,refresh_token:refresh,scope:'portfolio.read'});}
-export default {async fetch(r:Request,e:Env):Promise<Response>{const u=new URL(r.url);try{if(u.pathname==='/health')return json({ok:true});const oauth=await oauthRoutes(r,e,u);if(oauth)return oauth;
+export default {async scheduled(event:ScheduledEvent,e:Env):Promise<void>{await runEtradePreflight(e,event.scheduledTime);},async fetch(r:Request,e:Env):Promise<Response>{const u=new URL(r.url);try{if(u.pathname==='/health')return json({ok:true});const browser=await etradeBrowserRoutes(r,e,u);if(browser)return browser;const oauth=await oauthRoutes(r,e,u);if(oauth)return oauth;
  if(u.pathname==='/mcp'){if(!await authorizeMcp(r,e))return json({error:'unauthorized'},401,{'WWW-Authenticate':`Bearer resource_metadata="${origin(r)}/.well-known/oauth-protected-resource/mcp"`});if(r.method!=='GET'&&r.method!=='POST')return json({error:'method_not_allowed'},405);return mcp(e,r);}
  const admin=safe(r.headers.get('x-admin-password')??'',e.MCP_ADMIN_PASSWORD);if(u.pathname==='/etrade/status'){if(!admin)return json({error:'unauthorized'},401);return json(await status(e,r));}
  if(u.pathname==='/etrade/auth/start'&&(r.method==='GET'||r.method==='POST')){if(!admin)return json({error:'unauthorized'},401);const t=await new EtradeClient(e.ETRADE_CONSUMER_KEY,e.ETRADE_CONSUMER_SECRET).requestToken(),state=random();await e.STATE.put(`etrade:pending:${await hash(state)}`,JSON.stringify(t),{expirationTtl:300});const url=new URL('https://us.etrade.com/e/t/etws/authorize');url.searchParams.set('key',e.ETRADE_CONSUMER_KEY);url.searchParams.set('token',t.token);return json({authorizeUrl:url.toString(),verifierUrl:`${origin(r)}/etrade/complete?state=${encodeURIComponent(state)}`});}
