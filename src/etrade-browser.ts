@@ -1,4 +1,5 @@
-import {EtradeClient, EtradeError} from './etrade';
+import {EtradeClient} from './etrade';
+import {currentToken} from './etrade-session';
 import type {Env} from './types';
 
 const cookieName='portfolio_etrade_state';
@@ -57,12 +58,15 @@ async function complete(r:Request,env:Env,u:URL,callback:boolean):Promise<Respon
     .accessToken({token:pending.token,secret:pending.secret},verifier);
   await env.STATE.put('etrade:access',JSON.stringify(access));
   await env.STATE.delete(await key(state));
-  return html('<h1>E*TRADE connected</h1><p>Authorization completed. You can close this page.</p>',
-    200,{'Set-Cookie':cookie('',0)});
+  return new Response(null,{status:303,headers:{...commonHeaders,Location:'/etrade/connected','Set-Cookie':cookie('',0)}});
 }
 
 /** Browser-friendly entry point. The legacy admin-header endpoints remain available. */
 export async function etradeBrowserRoutes(r:Request,env:Env,u:URL):Promise<Response|undefined> {
+  if(u.pathname==='/etrade/connected'&&r.method==='GET') {
+    if(!await currentToken(env))return message('No current E*TRADE authorization.',401);
+    return html('<h1>E*TRADE connected</h1><p>Authorization completed. You can close this page.</p>');
+  }
   if(u.pathname==='/etrade/connect'&&r.method==='GET') {
     return html('<h1>Reconnect E*TRADE</h1><p>Use your Portfolio MCP admin password, not your brokerage password.</p>'+
       '<form method="post" action="/etrade/connect">'+
