@@ -1,5 +1,6 @@
 import {EtradeClient} from './etrade';
 import {currentToken} from './etrade-session';
+import {verifyTicketFromLink,verifiedBrowserTicket,consumeBrowserTicket,reconnectCookie} from './reconnect-ticket';
 import type {Env} from './types';
 
 const cookieName='portfolio_etrade_state';
@@ -68,15 +69,41 @@ export async function etradeBrowserRoutes(r:Request,env:Env,u:URL):Promise<Respo
     return html('<h1>E*TRADE connected</h1><p>Authorization completed. You can close this page.</p>');
   }
   if(u.pathname==='/etrade/connect'&&r.method==='GET') {
-    return html('<h1>Reconnect E*TRADE</h1><p>Use your Portfolio MCP admin password, not your brokerage password.</p>'+
+    const ticket=u.searchParams.get('ticket');
+    if(ticket!==null) {
+      if(!await verifyTicketFromLink(env,ticket))
+        return message('This reconnect link is invalid or has expired. Request a new one in ChatGPT.',403);
+      // Remove the bearer capability from the browser URL/history before displaying a form.
+      return new Response(null,{status:303,headers:{
+        ...commonHeaders,Location:'/etrade/connect','Set-Cookie':reconnectCookie(ticket)
+      }});
+    }
+    if(await verifiedBrowserTicket(env,r)) {
+      return html('<h1>Reconnect E*TRADE</h1>'+
+        '<p>This browser has a short-lived reconnect authorization from your ChatGPT Portfolio connection.</p>'+
+        '<form method="post" action="/etrade/connect">'+
+        '<button type="submit">Continue to E*TRADE</button></form>');
+    }
+    return html('<h1>Reconnect E*TRADE</h1>'+
+      '<p>Ask ChatGPT for a fresh E*TRADE reconnect link to skip this password step.</p>'+
+      '<p>Otherwise, enter your Portfolio MCP admin password, not your brokerage password.</p>'+
       '<form method="post" action="/etrade/connect">'+
       '<label>Portfolio MCP admin password <input type="password" name="password" autocomplete="current-password" required></label>'+
       '<button type="submit">Continue to E*TRADE</button></form>');
   }
   if(u.pathname==='/etrade/connect'&&r.method==='POST') {
     if(Number(r.headers.get('content-length')??0)>4096)return message('Invalid request.');
-    const p=new URLSearchParams(await r.text());
-    if(!constantEqual(p.get('password')??'',env.MCP_ADMIN_PASSWORD))return message('Invalid authorization.',401);
+    const body=await r.text();
+    if(body.length>4096)return message('Invalid request.');
+    const p=new URLSearchParams(body);
+    const browserTicket=await verifiedBrowserTicket(env,r);
+    const passwordOK=!!env.MCP_ADMIN_PASSWORD&&constantEqual(p.get('password')??'',env.MCP_ADMIN_PASSWORD);
+    if(!browserTicket && !passwordOK)return message('Invalid authorization. Request a new reconnect link in ChatGPT.',401);
+    if(browserTicket){
+      // Prevent cross-origin forms from using a stolen/session-bound browser capability.
+      if(r.headers.get('origin')!==u.origin)return message('Invalid request origin.',403);
+      await consumeBrowserTicket(env,browserTicket);
+    }
     const requested=await new EtradeClient(env.ETRADE_CONSUMER_KEY,env.ETRADE_CONSUMER_SECRET).requestToken();
     const state=random();
     await env.STATE.put(await key(state),JSON.stringify({
@@ -86,11 +113,14 @@ export async function etradeBrowserRoutes(r:Request,env:Env,u:URL):Promise<Respo
     if(!requested.callbackConfirmed) {
       const response=manualPage(url);
       response.headers.set('Set-Cookie',cookie(state,300));
+      if(browserTicket)response.headers.append('Set-Cookie',reconnectCookie('',0));
       return response;
     }
-    return new Response(null,{status:303,headers:{
+    const response=new Response(null,{status:303,headers:{
       ...commonHeaders,Location:url,'Set-Cookie':cookie(state,300)
     }});
+    if(browserTicket)response.headers.append('Set-Cookie',reconnectCookie('',0));
+    return response;
   }
   if(u.pathname==='/etrade/callback'&&r.method==='GET')
     return complete(r,env,u,true);
