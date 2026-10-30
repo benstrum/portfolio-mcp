@@ -27,7 +27,8 @@ export async function issueReconnectUrl(env:Env,req:Request):Promise<string> {
   const ticket=hex(crypto.getRandomValues(new Uint8Array(32)));
   await env.STATE.put(await ticketKey(ticket),JSON.stringify({issuedAt:Date.now()}),
     {expirationTtl:RECONNECT_TTL_SECONDS});
-  const url=new URL('/etrade/connect',req.url);
+  const url=new URL('/etrade/connect',env.ETRADE_PUBLIC_BASE_URL||req.url);
+  if(url.protocol!=='https:')throw new Error('Passwordless reconnect requires HTTPS');
   url.searchParams.set('ticket',ticket);
   return url.toString();
 }
