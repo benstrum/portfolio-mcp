@@ -41,6 +41,18 @@ it('issues high-entropy reconnect URLs and stores no raw bearer token in KV',asy
   expect(state.has('etrade:reconnect-ticket:'+secret)).toBe(false);
 });
 
+it('does not mint reconnect links for unauthenticated MCP clients',async()=>{
+  const {env,state}=memoryEnv();
+  const response=await worker.fetch(new Request(origin+'/mcp',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Accept':'application/json, text/event-stream'},
+    body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',
+      params:{name:'get_connection_status',arguments:{}}})
+  }),env);
+  expect(response.status).toBe(401);
+  expect([...state.keys()].filter(k=>k.startsWith('etrade:reconnect-ticket:'))).toHaveLength(0);
+});
+
 it('rejects arbitrary links without enabling an unauthenticated bypass',async()=>{
   const {env}=memoryEnv();
   const res=await worker.fetch(new Request(origin+'/etrade/connect?ticket='+'a'.repeat(64)),env);
