@@ -14,16 +14,25 @@ Configure repository GitHub **Secrets**: `ETRADE_CONSUMER_KEY`, `ETRADE_CONSUMER
 4. Open `verifierUrl` in your browser, paste the code and submit. Its random one-time state expires after five minutes. The Worker exchanges the code and stores the access token and secret in KV.
 5. Check `/etrade/status` with the admin header. It should report `connected: true`. Connect ChatGPT using the steps below.
 
-## Browser-based reconnect (recommended)
+## Passwordless reconnect through ChatGPT (recommended)
 
-After deployment, open **https://portfolio-mcp.ben-strum.workers.dev/etrade/connect** in a browser. The Worker shows a secure form for your Portfolio MCP admin password (not your E*TRADE password), then requests a short-lived E*TRADE request token.
+Once the Worker is deployed, you do **not** need to enter `MCP_ADMIN_PASSWORD` each time you reauthorize E*TRADE:
 
-- If E*TRADE confirms a registered callback, the Worker redirects you to E*TRADE to log in/approve. E*TRADE then redirects back with the verifier, and the Worker exchanges it automatically. This removes PowerShell and verifier copy/paste. The callback is bound to an HTTP-only, Secure, SameSite=Lax, five-minute browser session cookie; it does not require putting secrets or persistent brokerage credentials in the browser.
-- If no callback is registered, the Worker shows an E*TRADE authorization link and a same-page verification form. This still avoids PowerShell but requires pasting the code.
+1. Ask ChatGPT to check your Ben Portfolio connection. The existing authenticated `get_connection_status` MCP tool generates a unique **five-minute** `reconnectUrl` when E*TRADE authorization has expired. A tool returning `authorization_required` can generate the same URL.
+2. Open that link. The Worker verifies its capability, sets a short-lived Secure, HttpOnly, SameSite=Strict browser cookie, and redirects to a clean `/etrade/connect` URL, removing the ticket from the address bar.
+3. Click **Continue to E*TRADE**. You will not be asked for the Portfolio MCP admin password. The Worker consumes the short-lived ticket before starting E*TRADE OAuth.
+4. Complete E*TRADE login, consent and any MFA challenge. If E*TRADE has registered the callback, the verifier is exchanged automatically. Otherwise, paste the E*TRADE verifier into the browser form.
+
+The fallback `https://portfolio-mcp.ben-strum.workers.dev/etrade/connect` without a valid ChatGPT-issued link **still requires your admin password**. This is intentional: an unauthenticated visitor must not be able to replace the single brokerage token used by your portfolio tools. You can also use the old admin-header flow for emergency recovery. Reconnect URLs are bearer capabilities: do not paste them into public messages or logs; they expire after five minutes and the Worker deletes them after use.
+
+Your ChatGPT Portfolio MCP integration remains authenticated using its existing OAuth bearer token. The separate `/authorize` flow may still require the admin password if you reinstall or reauthorize the **ChatGPT connector itself**, but not for normal daily E*TRADE reconnection.
+
+- If E*TRADE confirms a registered callback, the Worker redirects you to E*TRADE and handles the browser return to `/etrade/callback`. The callback is bound to a separate five-minute, Secure, HttpOnly, SameSite=Lax session cookie.
+- If no callback is registered, the Worker shows an E*TRADE authorization link and same-page verifier form. This avoids PowerShell even when automatic verifier delivery is not possible.
 
 **One-time external setup required:** Ask E*TRADE customer service to register the exact callback URL `https://portfolio-mcp.ben-strum.workers.dev/etrade/callback` for your **production consumer key**. Per E*TRADE's [developer guide](https://developer.etrade.com/getting-started/developer-guides), sign in to E*TRADE, send a secure message with subject "Technical Issues", topic "E*TRADE API", and provide the callback URL and the consumer key. Do not include the consumer secret. The callback code is present but cannot be tested end to end until E*TRADE confirms registration.
 
-The older `/etrade/auth/start` admin-header endpoint and `/etrade/complete?state=...` verifier endpoint remain functional for compatibility, but the browser reconnect page is the preferred entry point. The MCP `get_connection_status` tool now returns a clickable `reconnectUrl` for the browser page.
+The older `/etrade/auth/start` admin-header endpoint and `/etrade/complete?state=...` verifier endpoint remain functional for compatibility. The MCP `get_connection_status` tool now supplies a fresh five-minute authorization link, which is preferred over opening the bare browser page.
 
 **Important limitation:** E*TRADE production access tokens expire at midnight Eastern. The renewal endpoint only restores tokens that became inactive during the SAME Eastern calendar day; cron or keepalive requests cannot avoid the daily authorization requirement. The browser-based approval still requires E*TRADE login and any MFA challenges. No brokerage password or session-cookie scraping is implemented.
 
@@ -35,7 +44,7 @@ An optional alert can be sent to a user-owned HTTPS webhook when the preflight f
 
 The configured `ETRADE_PUBLIC_BASE_URL` Worker variable is the public base URL used in alerts. If your Worker host changes, update this variable and ask E*TRADE to change the registered callback URL.
 
-**Production rollout:** Do not merge/deploy until the branch tests pass and the user approves the public-browser authorization flow. If desired, protect `/etrade/connect` with Cloudflare Access or a WAF rule in addition to its required admin password. Do not deploy a staged Worker with real E*TRADE production credentials and the same shared KV token namespace as the production Worker. Use isolated test credentials and storage.
+**Production rollout:** Do not merge/deploy until the branch tests pass and the user approves the public-browser authorization flow. Consider Cloudflare Access or rate limiting as additional defense-in-depth. Never remove the password fallback protection or expose an unauthenticated token-creation path. Do not deploy a staged Worker with real E*TRADE production credentials and the same shared KV token namespace as the production Worker. Use isolated test credentials and storage.
 
 ### Token life cycle
 
@@ -50,7 +59,7 @@ ChatGPT's connector UI and availability can vary by account. The Worker implemen
 ## Troubleshooting
 
 - **401 from `/mcp`:** The MCP OAuth bearer token is absent or expired. Reconnect the client; check the Worker's OAuth metadata and `/authorize` password.
-- **`authorization_required` from a tool:** E*TRADE token has expired or renewal failed. Open `/etrade/connect` in your browser. E*TRADE may still require login/MFA.
+- **`authorization_required` from a tool:** E*TRADE token has expired or renewal failed. Open the **fresh link generated by the authenticated MCP tool** instead of the bare `/etrade/connect` page; E*TRADE may still require login/MFA. If the link expires, ask ChatGPT for a new one.
 - **Invalid verifier/state:** Start authorization again; each browser session uses a five-minute, single-use authorization state. For registered callbacks, use the same browser through authorization and return.
 - **E*TRADE `upstream` error:** Confirm a production API key and account permissions. Upstream response bodies are deliberately not returned or logged.
 - **Empty accounts or positions:** Verify the E*TRADE user and account type; some accounts may not support the brokerage balance or portfolio endpoints.
