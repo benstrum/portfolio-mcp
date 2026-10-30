@@ -8,6 +8,7 @@ A TypeScript Cloudflare Worker that serves an authenticated Streamable HTTP MCP 
 | --- | --- | --- |
 | `GET /health` | Public | Worker liveness only |
 | `GET /etrade/status` | `x-admin-password` | E*TRADE connection status |
+| `GET/POST /etrade/connect` | Five-minute link issued through authenticated MCP or admin-password fallback | Initiate browser OAuth without repeatedly entering the MCP password |
 | `GET /etrade/auth/start` | `x-admin-password` | Request E*TRADE token and return authorization and verifier URLs |
 | `GET/POST /etrade/complete?state=...` | One-time state | Browser verifier form and token exchange |
 | `GET/POST /mcp` | OAuth 2 bearer token | Streamable HTTP MCP |
@@ -25,6 +26,10 @@ Account-specific tools require `accountIdKey` from `get_accounts`. `get_orders` 
 `get_portfolio_snapshot` excludes CLOSED accounts, continues if some active accounts fail, and reports unavailable accounts. Money-market funds such as VMFXX and VMSXX remain investment positions instead of being double-counted as cash. The snapshot distinguishes broker-reported account values from simple market-plus-cash estimates, which may not represent net liquidation value when margin liabilities are unknown. Missing historical market values and cash flows are not silently treated as portfolio return.
 
 Account numbers are masked, and account ID keys remain available for account-specific reads. See [docs/market-data.md](docs/market-data.md) for examples, quote licensing, response semantics, and limitations.
+
+## Reconnect without reentering the admin password
+
+When E*TRADE's daily access expires, invoke the existing authenticated `get_connection_status` MCP tool in ChatGPT. It returns a **five-minute `reconnectUrl`** that authorizes the browser to start E*TRADE OAuth without asking for `MCP_ADMIN_PASSWORD`. Open the link, select *Continue to E*TRADE*, then complete any brokerage login, MFA or verifier approval. The admin password is still required for direct access to the bare browser page and for first-time ChatGPT MCP connector authorization. No public login bypass has been introduced. See [docs/setup.md](docs/setup.md) for security behavior and one-time callback registration.
 
 ## Setup
 
