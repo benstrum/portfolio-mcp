@@ -1,5 +1,6 @@
 import {currentToken,connectedClient} from './etrade-session';
 import {etradeBrowserRoutes} from './etrade-browser';
+import {issueReconnectUrl} from './reconnect-ticket';
 import {runEtradePreflight} from './etrade-health';
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {WebStandardStreamableHTTPServerTransport} from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
@@ -20,16 +21,16 @@ const esc=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;
 const origin=(r:Request)=>new URL(r.url).origin;
 const connect=(r:Request)=>`${origin(r)}/etrade/connect`;
 async function token(env:Env){return currentToken(env);}
-async function status(env:Env,r:Request){const t=await token(env);const lastPreflight=await env.STATE.get('etrade:lastHealth','json');return {connected:!!t,authorizationRequired:!t,reconnectUrl:!t?connect(r):undefined,authorizedAt:t?.obtainedAt,lastPreflight};}
+async function status(env:Env,r:Request){const t=await token(env);const lastPreflight=await env.STATE.get('etrade:lastHealth','json');return {connected:!!t,authorizationRequired:!t,reconnectUrl:!t?await issueReconnectUrl(env,r):undefined,authorizedAt:t?.obtainedAt,lastPreflight};}
 async function client(env:Env,_r:Request){return (await connectedClient(env)).client;}
 const toolNames=['get_connection_status','get_accounts','get_account_balances','get_positions','get_transactions','get_portfolio_snapshot',
  'get_quotes','get_option_quote','get_option_chain','get_option_expirations','get_vertical_spread_quote','get_orders','get_position_lots'] as const;
 export {toolNames};
 async function mcp(env:Env,req:Request){const server=new McpServer({name:'etrade-readonly-portfolio',version:'1.0.0'});
  const result=(v:unknown)=>({content:[{type:'text' as const,text:JSON.stringify(v)}],structuredContent:v as Record<string,unknown>});
- const wrap=(fn:()=>Promise<unknown>)=>async()=>{try{return result(await fn());}catch(e){if(e instanceof EtradeError)return {content:[{type:'text' as const,text:JSON.stringify({error:e.kind,reconnectUrl:e.kind==='authorization_required'?connect(req):undefined})}],isError:true};return {content:[{type:'text' as const,text:'{"error":"internal"}'}],isError:true};}};
+ const wrap=(fn:()=>Promise<unknown>)=>async()=>{try{return result(await fn());}catch(e){if(e instanceof EtradeError)return {content:[{type:'text' as const,text:JSON.stringify({error:e.kind,reconnectUrl:e.kind==='authorization_required'?await issueReconnectUrl(env,req):undefined})}],isError:true};return {content:[{type:'text' as const,text:'{"error":"internal"}'}],isError:true};}};
  const account=async(key:string)=>{const c=await client(env,req);const accounts=await c.accounts();if(!accounts.some(a=>a.accountIdKey===key))throw new EtradeError('upstream',404);return c;};
- server.registerTool('get_connection_status',{description:'Read-only E*TRADE connection status and reconnect URL.'},wrap(()=>status(env,req)));
+ server.registerTool('get_connection_status',{description:'Read-only E*TRADE connection status and short-lived passwordless reconnect URL, issued only after MCP authentication.'},wrap(()=>status(env,req)));
  server.registerTool('get_accounts',{description:'Read-only list of all E*TRADE accounts.'},wrap(async()=>({accounts:await (await client(env,req)).accounts()})));
  server.registerTool('get_account_balances',{description:'Read-only balances for an E*TRADE account.',inputSchema:{accountIdKey:z.string().min(1)}},async({accountIdKey})=>wrap(async()=>({balance:await (await account(accountIdKey)).balance(accountIdKey)}))());
  server.registerTool('get_positions',{description:'Read-only positions for an E*TRADE account, including value and cost when supplied.',inputSchema:{accountIdKey:z.string().min(1)}},async({accountIdKey})=>wrap(async()=>({positions:await (await account(accountIdKey)).positions(accountIdKey)}))());
